@@ -4,7 +4,7 @@ import bpy.props as prop
 from .functions import EM_list_clear
 from bpy.props import StringProperty
 #from bpy.types import Panel
-
+#phd
 
 class EMdbListItem(bpy.types.PropertyGroup):
     """ Group of properties representing an item in the list """
