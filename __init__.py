@@ -1,7 +1,7 @@
 '''
-Copyright (C) 2018 Emanuel Demetrescu
+Copyright (C) 2022 Emanuel Demetrescu
 
-Created by EMANUEL DEMETRESCU 2018-2019
+Created by EMANUEL DEMETRESCU 2018-2022
 emanuel.demetrescu@cnr.it
 
     This program is free software: you can redistribute it and/or modify
@@ -22,10 +22,10 @@ bl_info = {
     "name": "EM tools",
     "description": "Blender tools for Extended Matrix",
     "author": "E. Demetrescu",
-    "version": (1, 2, 00),
-    "blender": (2, 93, 5),
+    "version": (1, 3, 0),
+    "blender": (3, 3, 0),
 #     "location": "3D View > Toolbox",
-#    "warning": "This addon is still in development.",
+    "warning": "This addon is still in development.",
     "wiki_url": "",
     "category": "Tools",
     }
@@ -40,7 +40,6 @@ from bpy.props import (
         StringProperty,
         BoolProperty,
         FloatProperty,
-        EnumProperty,
         IntProperty,
         PointerProperty,
         CollectionProperty,
@@ -48,9 +47,9 @@ from bpy.props import (
         )
         
 from bpy.types import (
-        AddonPreferences,
         PropertyGroup,
         )
+
 
 from . import (
         UI,
@@ -59,7 +58,12 @@ from . import (
         functions,
         paradata_manager,
         export_manager,
-        #telegram_io
+        visual_tools,
+        visual_manager,
+        em_setup,
+        sqlite_io,
+        #external_modules_install,
+        #google_credentials
         )
 
 from .functions import *
@@ -185,7 +189,9 @@ class EPOCHListItem(bpy.types.PropertyGroup):
        is_selected: BoolProperty(name="", default=False)
        epoch_soloing: BoolProperty(name="", default=False)
        rm_models: BoolProperty(name="", default=False)
-
+       reconstruction_on: BoolProperty(name="", default=False)
+       #line_art: BoolProperty(name="", default=False) 
+       
        unique_id: StringProperty(default="")
 
        epoch_RGB_color: FloatVectorProperty(
@@ -234,6 +240,11 @@ class EMListItem(bpy.types.PropertyGroup):
            name="code for icon",
            description="",
            default="RESTRICT_INSTANCED_ON")
+
+    icon_db: prop.StringProperty(
+           name="code for icon db",
+           description="",
+           default="DECORATE_ANIMATE") # nel caso di punto pieno sarà 'DECORATE_KEYFRAME'
 
     url: prop.StringProperty(
            name="url",
@@ -336,7 +347,6 @@ class EM_epochs_belonging_ob(bpy.types.PropertyGroup):
            description="Epoch",
            default="Untitled")
 
-
 class ExportVars(bpy.types.PropertyGroup):
        format_file : bpy.props.EnumProperty(
               items=[
@@ -361,11 +371,10 @@ class ExportTablesVars(bpy.types.PropertyGroup):
 ##################################
 
 classes = (
-    UI.VIEW3D_PT_SetupPanel,
     UI.VIEW3D_PT_ToolsPanel,
     UI.VIEW3D_PT_BasePanel,
+    UI.VIEW3D_PT_EMdbPanel,
     UI.EM_UL_named_epoch_managers,
-    UI.Display_mode_menu,
     UI.VIEW3D_PT_ParadataPanel,
     UI.EM_UL_properties_managers,
     UI.EM_UL_sources_managers,
@@ -381,6 +390,7 @@ classes = (
     EM_list.EM_select_list_item,
     EM_list.EM_not_in_matrix,
     epoch_manager.EM_UL_List,
+    epoch_manager.EM_toggle_reconstruction,
     epoch_manager.EM_toggle_select,
     epoch_manager.EM_toggle_visibility,
     epoch_manager.EM_set_EM_materials,
@@ -407,11 +417,23 @@ classes = (
     ExportTablesVars,
     EMviqListErrors,
     EmPreferences,
+    visual_tools.EM_label_creation,
+    em_create_collection,
     )
 
 def register():
 
+       sqlite_io.register()
+
+       em_setup.register()
+
+       visual_manager.register()
+
+       #external_modules_install.register()
+
        addon_updater_ops.register(bl_info)
+
+       #google_credentials.register()
 
        for cls in classes:
               bpy.utils.register_class(cls)
@@ -447,6 +469,8 @@ def register():
        bpy.types.Scene.em_v_extractors_list_index = prop.IntProperty(name = "Index for extractors list", default = 0, update = functions.stream_extractors)
        bpy.types.Scene.em_v_combiners_list = prop.CollectionProperty(type = EMListParadata)
        bpy.types.Scene.em_v_combiners_list_index = prop.IntProperty(name = "Index for combiners list", default = 0, update = functions.stream_combiners)
+
+       bpy.types.Scene.enable_image_compression = BoolProperty(name="Tex compression", description = "Use compression settings for textures. If disabled, original images (size and compression) will be used.",default=True)
 
        bpy.types.Scene.paradata_streaming_mode = BoolProperty(name="Paradata streaming mode", description = "Enable/disable tables streaming mode",default=True, update = functions.switch_paradata_lists)
        bpy.types.Scene.prop_paradata_streaming_mode = BoolProperty(name="Properties Paradata streaming mode", description = "Enable/disable property table streaming mode",default=True, update = functions.stream_properties)
@@ -496,6 +520,13 @@ def register():
            subtype='PASSWORD'
        )
 
+       bpy.types.Scene.ATON_path = StringProperty(
+           name="ATON path",
+           default="",
+           description="Define the path to the ATON framework (root folder)",
+           subtype='DIR_PATH'
+       )
+
        bpy.types.Scene.EMviq_model_author_name = StringProperty(
            name="Name of the author(s) of the models",
            default="",
@@ -533,6 +564,19 @@ def register():
        bpy.types.Object.EM_ep_belong_ob = CollectionProperty(type=EM_epochs_belonging_ob)
        bpy.types.Object.EM_ep_belong_ob_index = IntProperty()
 
+       bpy.types.Scene.EM_gltf_export_quality = IntProperty(
+       name="export quality",
+       default=100,
+       description="Define the quality of the output images. 100 is maximum quality but at a cost of bigger weight (no optimization); 80 is compressed with near lossless quality but still hight in weight; 60 is a good middle way; 40 is hardly optimized with some evident loss in quality (sometimes it can work).",
+       )
+
+       bpy.types.Scene.EM_gltf_export_maxres = IntProperty(
+       name="export max resolution",
+       default=4096,
+       description="Define the maximum resolution of the bigger side (it depends if it is a squared landscape or portrait image) of the output images",
+       )
+
+
        
 
 ######################################################################################################
@@ -540,6 +584,9 @@ def register():
 def unregister():
 
        addon_updater_ops.unregister(bl_info)
+       sqlite_io.unregister()
+       visual_manager.unregister()
+       em_setup.unregister()
 
        for cls in classes:
               try:
@@ -598,6 +645,14 @@ def unregister():
        del bpy.types.Scene.EMviq_project_name
        del bpy.types.Scene.EMviq_scene_folder
        del bpy.types.Scene.EMviq_model_author_name
+       del bpy.types.Scene.ATON_path
+       del bpy.types.Scene.EM_gltf_export_maxres
+       del bpy.types.Scene.EM_gltf_export_quality
+       del bpy.types.Scene.enable_image_compression
+       
 
+       
+       #external_modules_install.unregister()
+       #google_credentials.unregister()
 
 ######################################################################################################
